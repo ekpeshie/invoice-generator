@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -82,4 +83,14 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
   }
+}
+
+@theme inline {
+  --font-serif: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
+}
+
+/* Keep template colour bands when printing */
+#invoice-paper {
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
 }

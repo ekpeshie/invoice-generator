@@ -1,15 +1,18 @@
 import { useState, type ReactNode } from "react"
-import { Plus, Printer, RotateCcw, X } from "lucide-react"
+import { History, Plus, Printer, RotateCcw, X } from "lucide-react"
 
 import { Blank, BlankSelect } from "@/components/blank"
+import { ConfirmDialog, type ConfirmRequest } from "@/components/confirm-dialog"
+import { InvoiceHistory } from "@/components/invoice-history"
 import { InvoicePaper } from "@/components/invoice-paper"
+import { TemplatePicker } from "@/components/template-picker"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
-import { useInvoice } from "@/hooks/use-invoice"
-import { CURRENCIES, UNITS, calculate, makeMoney, type Invoice } from "@/lib/invoice"
+import { useInvoices } from "@/hooks/use-invoices"
+import { CURRENCIES, UNITS, calculate, clientName, makeMoney, type Invoice } from "@/lib/invoice"
 
 function Section({ step, title, children }: { step: number; title: string; children: ReactNode }) {
   return (
@@ -31,16 +34,22 @@ const Sentence = ({ children, className = "" }: { children: ReactNode; className
   <div className={`text-base leading-[2.75rem] ${className}`}>{children}</div>
 )
 
+const toTop = () => window.scrollTo({ top: 0, behavior: "smooth" })
+
 export default function App() {
-  const { invoice: inv, set, setItem, addItem, removeItem, reset } = useInvoice()
+  const {
+    current: inv, history, set, setItem, addItem, removeItem,
+    createInvoice, open, duplicate, remove, setStatus, clearCurrent,
+  } = useInvoices()
   const [justAdded, setJustAdded] = useState<string | null>(null)
   const [invalid, setInvalid] = useState<Set<keyof Invoice>>(new Set())
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
 
   const money = makeMoney(inv.currency)
   const { total } = calculate(inv)
 
   // Bind a text blank to a top-level invoice field
-  const field = <K extends keyof Invoice>(key: K, extra: { minCh?: number; placeholder: string; type?: string }) => ({
+  const field = <K extends keyof Invoice>(key: K, extra: { minCh?: number; placeholder: string }) => ({
     id: `f-${key}`,
     value: inv[key] as string,
     "aria-invalid": invalid.has(key) || undefined,
@@ -54,25 +63,53 @@ export default function App() {
   const download = () => {
     const missing = (["fromName", "toName"] as const).filter((k) => !inv[k].trim())
     setInvalid(new Set(missing))
-    if (missing.length && !window.confirm("Some key blanks are still empty. Print anyway?")) {
-      document.getElementById(`f-${missing[0]}`)?.focus()
-      return
-    }
-    window.print()
+    if (!missing.length) return window.print()
+    setConfirm({
+      title: "Some key blanks are empty",
+      description: `Your invoice has no ${missing.map((k) => (k === "fromName" ? "sender name" : "client name")).join(" or ")} yet. Download it anyway?`,
+      action: "Download anyway",
+      onConfirm: () => setTimeout(() => window.print(), 150),
+    })
   }
+
+  const switchTo = (fn: () => void) => { fn(); setInvalid(new Set()); setJustAdded(null); toTop() }
 
   return (
     <div className="mx-auto max-w-[1240px] px-4 py-8 sm:px-6 print:max-w-none print:p-0">
-      <header className="mb-6 print:hidden">
-        <h1 className="text-2xl font-semibold tracking-tight">Invoice generator</h1>
-        <p className="text-sm text-muted-foreground">Complete the sentences. Your invoice builds itself.</p>
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-4 print:hidden">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Invoice generator</h1>
+          <p className="text-sm text-muted-foreground">Complete the sentences. Your invoice builds itself.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="ghost" asChild>
+            <a href="#history"><History /> History{history.length > 0 && <Badge variant="secondary" className="tabular-nums">{history.length}</Badge>}</a>
+          </Button>
+          <Button variant="outline" onClick={() => switchTo(createInvoice)}><Plus /> New invoice</Button>
+        </div>
       </header>
 
       <div className="grid items-start gap-6 lg:grid-cols-[1.15fr_1fr] print:block">
         <Card className="min-w-0 print:hidden">
           <CardHeader>
-            <CardTitle>Fill in the blanks</CardTitle>
-            <CardDescription>Every blank updates the invoice next to it.</CardDescription>
+            <CardTitle className="flex flex-wrap items-center gap-2">
+              Fill in the blanks
+              <Badge variant="outline" className="font-normal text-muted-foreground">
+                {inv.number || "Untitled"}{clientName(inv) ? ` · ${clientName(inv)}` : ""}
+              </Badge>
+            </CardTitle>
+            <CardDescription>Every blank updates the invoice next to it. Changes save automatically.</CardDescription>
+            <CardAction>
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setConfirm({
+                title: "Clear this invoice?",
+                description: "Every blank on this invoice will be emptied. Your other invoices in history stay as they are.",
+                action: "Clear blanks",
+                destructive: true,
+                onConfirm: () => { clearCurrent(); setInvalid(new Set()) },
+              })}>
+                <RotateCcw /> Clear
+              </Button>
+            </CardAction>
           </CardHeader>
           <CardContent className="grid gap-5">
             <Section step={1} title="The invoice">
@@ -82,7 +119,7 @@ export default function App() {
                 and due on{" "}
                 <Blank type="date" id="f-due" aria-label="Due date" className="w-[9.5rem]" value={inv.due} onChange={(e) => set("due", e.target.value)} />.
                 All amounts are in{" "}
-                <BlankSelect aria-label="Currency" value={inv.currency} onChange={(e) => set("currency", e.target.value)}
+                <BlankSelect id="f-currency" aria-label="Currency" value={inv.currency} onChange={(e) => set("currency", e.target.value)}
                   options={CURRENCIES.map((c) => ({ value: c.code, label: c.label }))} />.
               </Sentence>
             </Section>
@@ -154,16 +191,14 @@ export default function App() {
                 <Blank {...field("notes", { placeholder: "Thank you for your business!", minCh: 24 })} />
               </Sentence>
             </Section>
-
-            <div>
-              <Button variant="ghost" className="text-muted-foreground" onClick={() => { if (window.confirm("Clear everything and start a new invoice?")) { reset(); setInvalid(new Set()) } }}>
-                <RotateCcw /> Start over
-              </Button>
-            </div>
           </CardContent>
         </Card>
 
-        <aside className="grid min-w-0 gap-3 lg:sticky lg:top-4 print:block">
+        <aside className="grid min-w-0 gap-4 lg:sticky lg:top-4 print:block">
+          <div className="grid gap-2 print:hidden">
+            <span className="text-sm font-medium">Design</span>
+            <TemplatePicker value={inv.template} onChange={(id) => set("template", id)} />
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">Live preview</span>
@@ -174,6 +209,25 @@ export default function App() {
           <InvoicePaper invoice={inv} />
         </aside>
       </div>
+
+      <div className="mt-6">
+        <InvoiceHistory
+          invoices={history}
+          currentId={inv.id}
+          onOpen={(id) => switchTo(() => open(id))}
+          onDuplicate={(id) => switchTo(() => duplicate(id))}
+          onStatus={setStatus}
+          onDelete={(target) => setConfirm({
+            title: `Delete ${target.number || "this invoice"}?`,
+            description: `${clientName(target) ? `The invoice for ${clientName(target)}` : "This invoice"} will be removed from this browser. This can't be undone.`,
+            action: "Delete",
+            destructive: true,
+            onConfirm: () => remove(target.id),
+          })}
+        />
+      </div>
+
+      <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
     </div>
   )
 }
